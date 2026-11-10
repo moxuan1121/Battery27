@@ -14,7 +14,18 @@
 - (void)b27_refresh;
 @end
 
-static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, UIColor *base, UIColor *fill) {
+// 状态栏里是否已经有单独的百分比文字（控制中心展开的状态栏就有）
+static BOOL B27HasPercentLabel(UIView *view) {
+    if ([view isKindOfClass:UILabel.class]) {
+        return !view.hidden && [((UILabel *)view).text containsString:@"%"];
+    }
+    for (UIView *sub in view.subviews) {
+        if (B27HasPercentLabel(sub)) return YES;
+    }
+    return NO;
+}
+
+static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BOOL plain, UIColor *base, UIColor *fill) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
     format.opaque = NO;
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
@@ -48,6 +59,8 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
         [fill setFill];
         UIRectFill(CGRectMake(0, 0, bodyW * pct, H));
         CGContextRestoreGState(ctx);
+
+        if (plain) return; // 旁边已有百分比文字：只画电池，不画数字
 
         // 数字（充电时后面跟一个小闪电），放不下就缩小字号
         NSString *text = [NSString stringWithFormat:@"%ld", (long)lround(pct * 100)];
@@ -133,16 +146,30 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
     else if (saver) fill = UIColor.systemYellowColor;
     else if (pct <= 0.2) fill = UIColor.systemRedColor;
 
+    // 所在状态栏已有“29%”这样的文字时（控制中心），电池里不再重复显示数字
+    BOOL plain = NO;
+    Class statusBar = %c(_UIStatusBar);
+    for (UIView *v = self.superview; v; v = v.superview) {
+        if ([v isKindOfClass:statusBar]) { plain = B27HasPercentLabel(v); break; }
+    }
+
     CGFloat scale = mine.contentsScale;
     CGFloat H = round(bounds.size.height * 1.13 * 0.95 * 0.97 * 0.97 * scale) / scale;
     CGFloat W = round(H * 27.0 / 13.0 * scale) / scale;
     mine.frame = CGRectMake(round((bounds.size.width - W) / 2 * scale) / scale,
                             round((bounds.size.height - H) / 2 * scale) / scale, W, H);
 
-    NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, base, H];
+    NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, plain, base, H];
     if (![key isEqualToString:self.b27_key]) {
+        if (self.b27_key) {
+            // 样式变化时淡入淡出，避免生硬跳变
+            CATransition *fade = [CATransition animation];
+            fade.type = kCATransitionFade;
+            fade.duration = 0.2;
+            [mine addAnimation:fade forKey:@"b27_fade"];
+        }
         self.b27_key = key;
-        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, saver && !charging, base, fill).CGImage;
+        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, saver && !charging && !plain, plain, base, fill).CGImage;
     }
 
     [CATransaction commit];
@@ -155,6 +182,11 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
     for (UIView *v = self.superview; v; v = v.superview) {
         if ([v isKindOfClass:statusBar]) {
             self.b27_active = YES;
+            // 百分比文字可能晚于电池视图出现，稍后再判断一次
+            __weak __typeof(self) weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [weakSelf b27_refresh];
+            });
             [self b27_refresh];
             break;
         }
