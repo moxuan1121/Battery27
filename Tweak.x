@@ -11,11 +11,10 @@
 @property (nonatomic, strong) CALayer *b27_layer;
 @property (nonatomic, copy) NSString *b27_key;
 @property (nonatomic, assign) BOOL b27_active;
-@property (nonatomic, assign) BOOL b27_plain;
 - (void)b27_refresh;
 @end
 
-static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, UIColor *base, UIColor *fill) {
+static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base, UIColor *fill) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
     format.opaque = NO;
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
@@ -43,11 +42,9 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, U
         UIRectFill(CGRectMake(0, 0, bodyW * pct, H));
         CGContextRestoreGState(ctx);
 
-        if (plain) return; // 控制中心：旁边已有百分比文字，电池内不画数字
-
         // 数字（充电时后面跟一个小闪电），放不下就缩小字号
         NSString *text = [NSString stringWithFormat:@"%ld", (long)lround(pct * 100)];
-        CGFloat fontSize = H * 0.95;
+        CGFloat fontSize = H * 0.83;
         NSDictionary *attrs = nil;
         UIFont *font = nil;
         UIImage *bolt = nil;
@@ -56,38 +53,27 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, U
         for (;;) {
             font = [UIFont systemFontOfSize:fontSize weight:UIFontWeightBold];
             attrs = @{ NSFontAttributeName: font,
-                       NSForegroundColorAttributeName: base,
+                       NSForegroundColorAttributeName: UIColor.blackColor,
                        NSKernAttributeName: @(-fontSize * 0.03) };
             textSize = [text sizeWithAttributes:attrs];
             if (charging) {
                 UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:fontSize * 0.62 weight:UIImageSymbolWeightBold];
-                bolt = [[UIImage systemImageNamed:@"bolt.fill" withConfiguration:cfg] imageWithTintColor:base renderingMode:UIImageRenderingModeAlwaysOriginal];
+                bolt = [[UIImage systemImageNamed:@"bolt.fill" withConfiguration:cfg] imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal];
                 boltW = bolt.size.width + fontSize * 0.05;
             }
             if (textSize.width + boltW <= bodyW - H * 0.2 || fontSize <= 6) break;
             fontSize -= 0.5;
         }
 
+        // 镂空绘制：任何状态栏背景下都清晰
         CGFloat x = (bodyW - textSize.width - boltW) / 2;
         CGFloat y = (H - font.capHeight) / 2 - (font.ascender - font.capHeight);
-        CGPoint textPoint = CGPointMake(x, y);
-        CGRect boltRect = CGRectMake(x + textSize.width + fontSize * 0.05, (H - bolt.size.height) / 2, bolt.size.width, bolt.size.height);
-        CGFloat split = bodyW * pct;
-
-        // iOS 27：落在已填充部分的数字镂空，落在未填充部分的数字用前景色实心
-        CGContextSaveGState(ctx);
-        CGContextClipToRect(ctx, CGRectMake(0, 0, split, H));
         CGContextSetBlendMode(ctx, kCGBlendModeDestinationOut);
-        [text drawAtPoint:textPoint withAttributes:attrs];
-        if (bolt) [bolt drawInRect:boltRect blendMode:kCGBlendModeDestinationOut alpha:1];
-        CGContextRestoreGState(ctx);
-
-        CGContextSaveGState(ctx);
-        CGContextClipToRect(ctx, CGRectMake(split, 0, W - split, H));
-        CGContextSetBlendMode(ctx, kCGBlendModeCopy);
-        [text drawAtPoint:textPoint withAttributes:attrs];
-        if (bolt) [bolt drawInRect:boltRect blendMode:kCGBlendModeCopy alpha:1];
-        CGContextRestoreGState(ctx);
+        [text drawAtPoint:CGPointMake(x, y) withAttributes:attrs];
+        if (bolt) {
+            CGRect r = CGRectMake(x + textSize.width + fontSize * 0.05, (H - bolt.size.height) / 2, bolt.size.width, bolt.size.height);
+            [bolt drawInRect:r blendMode:kCGBlendModeDestinationOut alpha:1];
+        }
     }];
 }
 
@@ -96,7 +82,6 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, U
 %property (nonatomic, strong) CALayer *b27_layer;
 %property (nonatomic, copy) NSString *b27_key;
 %property (nonatomic, assign) BOOL b27_active;
-%property (nonatomic, assign) BOOL b27_plain;
 
 %new(v@:)
 - (void)b27_refresh {
@@ -134,17 +119,15 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, U
     else if (pct <= 0.2) fill = UIColor.systemRedColor;
 
     CGFloat scale = mine.contentsScale;
-    // 比例取自 iOS 27 截图：状态栏电池高约为旁边文字大写高度的 1.3 倍，控制中心约 1.1 倍
-    BOOL plain = self.b27_plain;
-    CGFloat H = round(bounds.size.height * (plain ? 0.75 : 0.88) * scale) / scale;
-    CGFloat W = round(H * (plain ? 2.2 : 27.0 / 13.0) * scale) / scale;
+    CGFloat H = round(bounds.size.height * 1.13 * 0.95 * scale) / scale;
+    CGFloat W = round(H * 27.0 / 13.0 * scale) / scale;
     mine.frame = CGRectMake(round((bounds.size.width - W) / 2 * scale) / scale,
                             round((bounds.size.height - H) / 2 * scale) / scale, W, H);
 
-    NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, plain, base, H];
+    NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, base, H];
     if (![key isEqualToString:self.b27_key]) {
         self.b27_key = key;
-        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, plain, base, fill).CGImage;
+        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, base, fill).CGImage;
     }
 
     [CATransaction commit];
@@ -154,15 +137,13 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL plain, U
     %orig;
     if (!self.window || self.b27_active) return;
     Class statusBar = %c(_UIStatusBar);
-    BOOL inStatusBar = NO, inControlCenter = NO;
     for (UIView *v = self.superview; v; v = v.superview) {
-        if ([v isKindOfClass:statusBar]) inStatusBar = YES;
-        else if ([NSStringFromClass(v.class) hasPrefix:@"CCUI"]) inControlCenter = YES;
+        if ([v isKindOfClass:statusBar]) {
+            self.b27_active = YES;
+            [self b27_refresh];
+            break;
+        }
     }
-    if (!inStatusBar) return;
-    self.b27_plain = inControlCenter;
-    self.b27_active = YES;
-    [self b27_refresh];
 }
 
 - (void)layoutSubviews {
