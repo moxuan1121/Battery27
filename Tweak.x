@@ -23,7 +23,7 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base
         CGFloat H = size.height, W = size.width;
         CGFloat nubW = H * 0.11, gap = H * 0.08, nubH = H * 0.34;
         CGFloat bodyW = W - nubW - gap;
-        UIColor *track = [base colorWithAlphaComponent:0.4];
+        UIColor *track = [base colorWithAlphaComponent:0.6];
 
         // 底色（未充满的部分）+ 正极小凸点
         UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, bodyW, H) cornerRadius:H * 0.31];

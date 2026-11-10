@@ -1,6 +1,6 @@
 Package: com.moxuan.battery27
 Name: 电池27
-Version: 0.1.4
+Version: 0.1.5
 Architecture: iphoneos-arm
 Description: 仿 iOS 27 状态栏电池：无描边实心胶囊，电量百分比数字显示在电池图标内。无设置，安装即生效。
 Maintainer: moxuan1121
