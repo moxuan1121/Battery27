@@ -14,7 +14,7 @@
 - (void)b27_refresh;
 @end
 
-static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base, UIColor *fill) {
+static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, UIColor *base, UIColor *fill) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
     format.opaque = NO;
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
@@ -76,6 +76,13 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base
             CGRect r = CGRectMake(x + textSize.width + fontSize * 0.05, (H - bolt.size.height) / 2, bolt.size.width, bolt.size.height);
             [bolt drawInRect:r blendMode:kCGBlendModeDestinationOut alpha:1];
         }
+
+        // 省电模式：黄色段上的数字固定用黑色实心，浅色背景下镂空（露出白底）看不清
+        if (darkInk) {
+            CGContextSetBlendMode(ctx, kCGBlendModeNormal);
+            CGContextClipToRect(ctx, CGRectMake(0, 0, bodyW * pct, H));
+            [text drawAtPoint:CGPointMake(x, y) withAttributes:attrs];
+        }
     }];
 }
 
@@ -129,7 +136,7 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base
     NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, base, H];
     if (![key isEqualToString:self.b27_key]) {
         self.b27_key = key;
-        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, base, fill).CGImage;
+        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, saver && !charging, base, fill).CGImage;
     }
 
     [CATransaction commit];
