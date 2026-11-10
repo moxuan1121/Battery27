@@ -23,7 +23,14 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
         CGFloat H = size.height, W = size.width;
         CGFloat nubW = H * 0.11, gap = H * 0.08, nubH = H * 0.34;
         CGFloat bodyW = W - nubW - gap;
-        UIColor *track = [base colorWithAlphaComponent:0.6];
+        CGFloat trackAlpha = 0.6;
+        if (darkInk) {
+            // 省电模式数字是黑色：浅色背景（前景色为深色）时把未填充段调浅，黑字才看得清
+            CGFloat r = 1, g = 1, b = 1;
+            [base getRed:&r green:&g blue:&b alpha:NULL];
+            if (0.299 * r + 0.587 * g + 0.114 * b < 0.5) trackAlpha = 0.25;
+        }
+        UIColor *track = [base colorWithAlphaComponent:trackAlpha];
 
         // 底色（未充满的部分）+ 正极小凸点
         UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, bodyW, H) cornerRadius:H * 0.31];
@@ -77,10 +84,9 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
             [bolt drawInRect:r blendMode:kCGBlendModeDestinationOut alpha:1];
         }
 
-        // 省电模式：黄色段上的数字固定用黑色实心，浅色背景下镂空（露出白底）看不清
+        // 省电模式：整个数字统一用黑色实心（浅色背景下镂空露出白底，在黄色上看不清）
         if (darkInk) {
             CGContextSetBlendMode(ctx, kCGBlendModeNormal);
-            CGContextClipToRect(ctx, CGRectMake(0, 0, bodyW * pct, H));
             [text drawAtPoint:CGPointMake(x, y) withAttributes:attrs];
         }
     }];
