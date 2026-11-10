@@ -44,16 +44,18 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base
 
         // 数字（充电时后面跟一个小闪电），放不下就缩小字号
         NSString *text = [NSString stringWithFormat:@"%ld", (long)lround(pct * 100)];
-        CGFloat fontSize = H * 0.83 * 1.1;
+        CGFloat fontSize = H * 0.83 * 1.1 * 1.1;
         NSDictionary *attrs = nil;
         UIFont *font = nil;
         UIImage *bolt = nil;
         CGSize textSize = CGSizeZero;
         CGFloat boltW = 0;
         for (;;) {
-            font = [UIFont systemFontOfSize:fontSize weight:UIFontWeightHeavy];
+            font = [UIFont systemFontOfSize:fontSize weight:UIFontWeightBlack];
             attrs = @{ NSFontAttributeName: font,
                        NSForegroundColorAttributeName: UIColor.blackColor,
+                       NSStrokeColorAttributeName: UIColor.blackColor,
+                       NSStrokeWidthAttributeName: @(-4), // Black 已是系统最粗，再用描边加粗一档
                        NSKernAttributeName: @(-fontSize * 0.03) };
             textSize = [text sizeWithAttributes:attrs];
             if (charging) {
@@ -119,7 +121,7 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, UIColor *base
     else if (pct <= 0.2) fill = UIColor.systemRedColor;
 
     CGFloat scale = mine.contentsScale;
-    CGFloat H = round(bounds.size.height * 1.13 * 0.95 * 0.97 * scale) / scale;
+    CGFloat H = round(bounds.size.height * 1.13 * 0.95 * 0.97 * 0.97 * scale) / scale;
     CGFloat W = round(H * 27.0 / 13.0 * scale) / scale;
     mine.frame = CGRectMake(round((bounds.size.width - W) / 2 * scale) / scale,
                             round((bounds.size.height - H) / 2 * scale) / scale, W, H);
