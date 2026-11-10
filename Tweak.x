@@ -8,7 +8,7 @@
 @property (nonatomic) NSInteger chargingState;
 @property (nonatomic) BOOL saverModeActive;
 @property (nonatomic, copy) UIColor *bodyColor;
-@property (nonatomic, strong) CALayer *b27_layer;
+@property (nonatomic, copy) UIColor *fillColor;
 @property (nonatomic, copy) NSString *b27_key;
 @property (nonatomic, assign) BOOL b27_active;
 - (void)b27_refresh;
@@ -107,69 +107,73 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
 
 %hook _UIBatteryView
 
-%property (nonatomic, strong) CALayer *b27_layer;
 %property (nonatomic, copy) NSString *b27_key;
 %property (nonatomic, assign) BOOL b27_active;
 
 %new(v@:)
 - (void)b27_refresh {
-    if (!self.b27_active) return;
-    CGRect bounds = self.bounds;
-    if (bounds.size.height < 1) return;
+    Class statusBarClass = %c(_UIStatusBar);
+    UIView *statusBar = nil;
+    for (UIView *v = self.superview; v; v = v.superview) {
+        if ([v isKindOfClass:statusBarClass]) { statusBar = v; break; }
+    }
 
+    // 只接管状态栏里的电池；每次刷新都可以补做接管，不依赖某一个时机
+    if (!self.b27_active) {
+        if (!statusBar || !self.window) return;
+        self.b27_active = YES;
+        // 百分比文字可能晚于电池视图出现，稍后再判断一次
+        __weak __typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [weakSelf b27_refresh];
+        });
+    }
+
+    CALayer *host = self.layer;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
 
-    CALayer *mine = self.b27_layer;
-    if (!mine) {
-        mine = [CALayer layer];
-        mine.contentsScale = UIScreen.mainScreen.scale;
-        self.b27_layer = mine;
-    }
-    if (mine.superlayer != self.layer) [self.layer addSublayer:mine];
+    // 系统原生的电池图层全部是子图层：整体移出可见范围。
+    // 不管系统之后怎么重建、显示、做动画，原生图标都不会再露出来；我们的图画在视图自身图层上。
+    host.sublayerTransform = CATransform3DMakeTranslation(0, 20000, 0);
+    host.masksToBounds = NO;
+    host.contentsGravity = kCAGravityCenter;
+    CGFloat scale = UIScreen.mainScreen.scale;
+    host.contentsScale = scale;
 
-    // 隐藏系统原有的电池图层
-    for (CALayer *l in [self.layer.sublayers copy]) {
-        if (l != mine && !l.hidden) l.hidden = YES;
-    }
+    CGRect bounds = self.bounds;
+    if (bounds.size.height >= 1) {
+        CGFloat pct = self.chargePercent;
+        if (pct > 1) pct /= 100;
+        pct = MAX(0, MIN(1, pct));
+        BOOL charging = self.chargingState != 0;
+        BOOL saver = self.saverModeActive;
 
-    CGFloat pct = self.chargePercent;
-    if (pct > 1) pct /= 100;
-    pct = MAX(0, MIN(1, pct));
-    BOOL charging = self.chargingState != 0;
-    BOOL saver = self.saverModeActive;
+        UIColor *base = self.bodyColor ?: self.tintColor ?: UIColor.labelColor;
+        base = [[base resolvedColorWithTraitCollection:self.traitCollection] colorWithAlphaComponent:1];
+        UIColor *fill = base;
+        if (charging) fill = UIColor.systemGreenColor;
+        else if (saver) fill = UIColor.systemYellowColor;
+        else if (pct <= 0.2) fill = UIColor.systemRedColor;
 
-    UIColor *base = self.bodyColor ?: self.tintColor ?: UIColor.labelColor;
-    base = [[base resolvedColorWithTraitCollection:self.traitCollection] colorWithAlphaComponent:1];
-    UIColor *fill = base;
-    if (charging) fill = UIColor.systemGreenColor;
-    else if (saver) fill = UIColor.systemYellowColor;
-    else if (pct <= 0.2) fill = UIColor.systemRedColor;
+        // 所在状态栏已有“29%”这样的文字时（控制中心），电池里不再重复显示数字
+        BOOL plain = statusBar && B27HasPercentLabel(statusBar);
 
-    // 所在状态栏已有“29%”这样的文字时（控制中心），电池里不再重复显示数字
-    BOOL plain = NO;
-    Class statusBar = %c(_UIStatusBar);
-    for (UIView *v = self.superview; v; v = v.superview) {
-        if ([v isKindOfClass:statusBar]) { plain = B27HasPercentLabel(v); break; }
-    }
+        CGFloat H = round(bounds.size.height * 1.13 * 0.95 * 0.97 * 0.97 * scale) / scale;
+        CGFloat W = round(H * 27.0 / 13.0 * scale) / scale;
 
-    CGFloat scale = mine.contentsScale;
-    CGFloat H = round(bounds.size.height * 1.13 * 0.95 * 0.97 * 0.97 * scale) / scale;
-    CGFloat W = round(H * 27.0 / 13.0 * scale) / scale;
-    mine.frame = CGRectMake(round((bounds.size.width - W) / 2 * scale) / scale,
-                            round((bounds.size.height - H) / 2 * scale) / scale, W, H);
-
-    NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, plain, base, H];
-    if (![key isEqualToString:self.b27_key]) {
-        if (self.b27_key) {
-            // 样式变化时淡入淡出，避免生硬跳变
-            CATransition *fade = [CATransition animation];
-            fade.type = kCATransitionFade;
-            fade.duration = 0.2;
-            [mine addAnimation:fade forKey:@"b27_fade"];
+        NSString *key = [NSString stringWithFormat:@"%ld|%d|%d|%d|%@|%.2f", (long)lround(pct * 100), charging, saver, plain, base, H];
+        if (![key isEqualToString:self.b27_key]) {
+            if (self.b27_key) {
+                // 样式变化时淡入淡出，避免生硬跳变
+                CATransition *fade = [CATransition animation];
+                fade.type = kCATransitionFade;
+                fade.duration = 0.2;
+                [host addAnimation:fade forKey:@"b27_fade"];
+            }
+            self.b27_key = key;
+            host.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, saver && !charging && !plain, plain, base, fill).CGImage;
         }
-        self.b27_key = key;
-        mine.contents = (__bridge id)B27Render(CGSizeMake(W, H), pct, charging, saver && !charging && !plain, plain, base, fill).CGImage;
     }
 
     [CATransaction commit];
@@ -177,20 +181,12 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
 
 - (void)didMoveToWindow {
     %orig;
-    if (!self.window || self.b27_active) return;
-    Class statusBar = %c(_UIStatusBar);
-    for (UIView *v = self.superview; v; v = v.superview) {
-        if ([v isKindOfClass:statusBar]) {
-            self.b27_active = YES;
-            // 百分比文字可能晚于电池视图出现，稍后再判断一次
-            __weak __typeof(self) weakSelf = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [weakSelf b27_refresh];
-            });
-            [self b27_refresh];
-            break;
-        }
-    }
+    [self b27_refresh];
+}
+
+- (void)didMoveToSuperview {
+    %orig;
+    [self b27_refresh];
 }
 
 - (void)layoutSubviews {
@@ -214,6 +210,11 @@ static UIImage *B27Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk,
 }
 
 - (void)setBodyColor:(UIColor *)color {
+    %orig;
+    [self b27_refresh];
+}
+
+- (void)setFillColor:(UIColor *)color {
     %orig;
     [self b27_refresh];
 }
