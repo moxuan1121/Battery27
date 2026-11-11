@@ -45,7 +45,7 @@ jobs:
           test "$(dpkg-deb -f "$deb" Architecture)" = iphoneos-arm64e
           dpkg-deb -c "$deb" | tee /tmp/list.txt
           grep -q 'Battery27.dylib' /tmp/list.txt
-          dpkg-deb -x "$deb" /tmp/pkg && plutil -p /tmp/pkg/Library/MobileSubstrate/DynamicLibraries/Battery27.plist | tee /dev/stderr | grep -q com.apple.UIKit
+          dpkg-deb -x "$deb" /tmp/pkg && plutil -p /tmp/pkg/Library/MobileSubstrate/DynamicLibraries/Battery27.plist | tee /dev/stderr | grep -q com.apple.springboard
 
       # iOS 15 libobjc kills the process loading a binary whose class pointers are unsigned (SafariModernizer 1.0.1)
       - name: Verify ObjC pointer signing
