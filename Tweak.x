@@ -1,7 +1,8 @@
 #import <UIKit/UIKit.h>
 
 // 电池27：把状态栏里的 _UIBatteryView 换成 iOS 27 风格的无描边实心胶囊，电量数字显示在电池内部。
-// 只注入 SpringBoard（应用内的状态栏电池在本设备上也由 SpringBoard 绘制）。
+// 注入 SpringBoard 和所有应用：应用内 SpringBoard 会在应用自己的状态栏上面再盖一层状态栏，
+// 数字是镂空的，两层都换成胶囊才能透出背景；只注入 SpringBoard 时镂空处会露出下面应用的原生黑色电池。
 // 做法：系统原生的电池图层全部是电池视图的子图层，用 sublayerTransform 整体移出可见范围；
 // 我们的图画在电池视图自身图层的 contents 上，系统之后怎么重建、显示子图层都不会露出原生图标。
 
