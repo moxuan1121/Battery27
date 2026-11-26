@@ -1,8 +1,8 @@
 #import <UIKit/UIKit.h>
 
 // 电池27：把状态栏里的 _UIBatteryView 换成 iOS 27 风格的无描边实心胶囊，电量数字显示在电池内部。
-// 注入 SpringBoard 和所有应用：应用内 SpringBoard 会在应用自己的状态栏上面再盖一层状态栏，
-// 数字是镂空的，两层都换成胶囊才能透出背景；只注入 SpringBoard 时镂空处会露出下面应用的原生黑色电池。
+// 只注入 SpringBoard。应用在前台时，SpringBoard 的状态栏盖在应用自己的状态栏上面（推测），
+// 镂空的数字会露出下面应用的原生电池（满电时是一整块黑色），所以这时给胶囊垫一块不透明底色把下层遮住。
 // 做法：系统原生的电池图层全部是电池视图的子图层，用 sublayerTransform 整体移出可见范围；
 // 我们的图画在电池视图自身图层的 contents 上，系统之后怎么重建、显示子图层都不会露出原生图标。
 
@@ -10,6 +10,54 @@
 static const CGFloat kHeightRatio = 1.13 * 0.95 * 0.97 * 0.97; // 胶囊高度 / 电池视图高度
 static const CGFloat kAspect      = 27.0 / 13.0;               // 胶囊宽 / 高
 static const CGFloat kFontRatio   = 0.83 * 1.1 * 1.1;          // 数字字号 / 胶囊高度
+
+static NSString *const kRefreshNotification = @"com.moxuan.battery27.refresh";
+
+@interface SpringBoard : UIApplication
+- (id)_accessibilityFrontMostApplication;
+@end
+
+@interface SBLockScreenManager : NSObject
++ (instancetype)sharedInstance;
+- (BOOL)isUILocked;
+@end
+
+// 诊断日志：/var/mobile/Battery27.log（超过 100KB 清空重写）
+static void Log(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void Log(NSString *format, ...) {
+    static NSString *const path = @"/var/mobile/Battery27.log";
+    static NSDateFormatter *df;
+    if (!df) {
+        df = [NSDateFormatter new];
+        df.dateFormat = @"HH:mm:ss.SSS";
+    }
+    va_list args;
+    va_start(args, format);
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [df stringFromDate:[NSDate date]], [[NSString alloc] initWithFormat:format arguments:args]];
+    va_end(args);
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!fh || [fh seekToEndOfFile] > 100 * 1024) {
+        [fh closeFile];
+        [line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+    [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [fh closeFile];
+}
+
+// 有应用在前台且没锁屏：状态栏盖在应用上面
+static BOOL AppInFront(void) {
+    if ([[%c(SBLockScreenManager) sharedInstance] isUILocked]) return NO;
+    return [(SpringBoard *)UIApplication.sharedApplication _accessibilityFrontMostApplication] != nil;
+}
+
+static NSString *ViewChain(UIView *view) {
+    NSMutableArray *names = [NSMutableArray array];
+    for (UIView *v = view.superview; v && names.count < 8; v = v.superview) {
+        [names addObject:NSStringFromClass(v.class)];
+    }
+    return [names componentsJoinedByString:@" < "];
+}
 
 @interface _UIBatteryView : UIView
 @property (nonatomic) CGFloat chargePercent;
@@ -48,8 +96,9 @@ static BOOL IsDark(UIColor *color) {
     return 0.299 * r + 0.587 * g + 0.114 * b < 0.5;
 }
 
-// pct: 0~1；plain: 只画电池不画数字；darkInk: 数字用黑色实心（省电模式）而不是镂空
-static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BOOL plain, UIColor *base, UIColor *fill) {
+// pct: 0~1；plain: 只画电池不画数字；darkInk: 数字用黑色实心（省电模式）而不是镂空；
+// backing: 非 nil 时在胶囊后面垫这块不透明底色（镂空和半透明的未填充段都会显示成它）
+static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BOOL plain, UIColor *base, UIColor *fill, UIColor *backing) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
     format.opaque = NO;
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
@@ -79,7 +128,19 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
         UIRectFill(CGRectMake(0, 0, bodyW * pct, H));
         CGContextRestoreGState(ctx);
 
-        if (plain) return;
+        // 最后一步：在已画内容的后面垫底色（DestinationOver 只填透明和半透明的地方）
+        void (^applyBacking)(void) = ^{
+            if (!backing) return;
+            CGContextSetBlendMode(ctx, kCGBlendModeDestinationOver);
+            [backing setFill];
+            [body fill];
+            [nub fill];
+        };
+
+        if (plain) {
+            applyBacking();
+            return;
+        }
 
         // 数字（充电时后面跟一个小闪电），放不下就缩小字号
         NSString *text = [NSString stringWithFormat:@"%ld", lround(pct * 100)];
@@ -121,6 +182,7 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
             CGContextSetBlendMode(ctx, kCGBlendModeNormal);
             [text drawAtPoint:origin withAttributes:attrs];
         }
+        applyBacking();
     }];
 }
 
@@ -147,6 +209,10 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
         host.contentsScale = UIScreen.mainScreen.scale;
         [CATransaction commit];
 
+        // 前台应用切换、锁屏解锁时重新判断要不要垫底色
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(b27_refresh) name:kRefreshNotification object:nil];
+        Log(@"activate %p %@ | %@", self, NSStringFromCGRect([self convertRect:self.bounds toView:nil]), ViewChain(self));
+
         // 百分比文字可能晚于电池视图出现，稍后再判断一次
         __weak __typeof(self) weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -163,6 +229,8 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
     BOOL charging = self.chargingState != 0;
     BOOL saver = self.saverModeActive;
     BOOL plain = statusBar && HasPercentLabel(statusBar);
+    // 控制中心（plain）背景是模糊材质，不垫底色
+    BOOL backed = !plain && AppInFront();
 
     UITraitCollection *traits = self.traitCollection;
     UIColor *base = [[(self.bodyColor ?: self.tintColor) resolvedColorWithTraitCollection:traits] colorWithAlphaComponent:1];
@@ -173,7 +241,7 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
     CGFloat H = round(viewH * kHeightRatio * scale) / scale;
 
     // 外观参数都没变就不重画（layoutSubviews 很频繁，这里是主要的省电点）
-    NSString *key = [NSString stringWithFormat:@"%ld|%d%d%d|%.3f,%.3f,%.3f|%.2f", lround(pct * 100), charging, saver, plain, r, g, b, H];
+    NSString *key = [NSString stringWithFormat:@"%ld|%d%d%d%d|%.3f,%.3f,%.3f|%.2f", lround(pct * 100), charging, saver, plain, backed, r, g, b, H];
     if ([key isEqualToString:self.b27_key]) return;
 
     UIColor *fill = base;
@@ -183,7 +251,10 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
     fill = [fill resolvedColorWithTraitCollection:traits];
 
     CGFloat W = round(H * kAspect * scale) / scale;
-    UIImage *image = Render(CGSizeMake(W, H), pct, charging, saver && !charging && !plain, plain, base, fill);
+    UIColor *backing = backed ? (IsDark(base) ? UIColor.whiteColor : UIColor.blackColor) : nil;
+    UIImage *image = Render(CGSizeMake(W, H), pct, charging, saver && !charging && !plain, plain, base, fill, backing);
+    Log(@"render %p pct=%ld plain=%d backed=%d dark=%d %@ win=%@ lvl=%.0f", self, lround(pct * 100), plain, backed, IsDark(base),
+        NSStringFromCGRect([self convertRect:self.bounds toView:nil]), NSStringFromClass(self.window.class), self.window.windowLevel);
 
     CALayer *host = self.layer;
     [CATransaction begin];
@@ -241,3 +312,31 @@ static UIImage *Render(CGSize size, CGFloat pct, BOOL charging, BOOL darkInk, BO
 }
 
 %end
+
+static void PostRefresh(void) {
+    // 推迟到下一轮主循环，等系统把前台应用 / 锁屏状态更新完
+    dispatch_async(dispatch_get_main_queue(), ^{
+        Log(@"refresh appInFront=%d", AppInFront());
+        [NSNotificationCenter.defaultCenter postNotificationName:kRefreshNotification object:nil];
+    });
+}
+
+%hook SpringBoard
+
+- (void)frontDisplayDidChange:(id)display {
+    %orig;
+    PostRefresh();
+}
+
+%end
+
+static void LockStateChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    PostRefresh();
+}
+
+%ctor {
+    %init;
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, LockStateChanged,
+                                    CFSTR("com.apple.springboard.lockstate"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    Log(@"loaded");
+}
